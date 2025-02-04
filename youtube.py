@@ -1,9 +1,8 @@
-
-
-import requests
+import os
+import aiohttp
+import asyncio
 from datetime import datetime, timezone
 from telegram import Bot
-import asyncio
 
 # Replace with your YouTube Data API key
 # Replace with your Telegram bot token and chat ID
@@ -41,27 +40,27 @@ def time_ago(published_at):
     else:
         return f"{int(seconds // 604800)} weeks ago"
 
-def get_channel_id(username):
+async def get_channel_id(session, username):
     """Fetch channel ID from username."""
     url = f"https://www.googleapis.com/youtube/v3/channels?part=id&forHandle={username}&key={API_KEY}"
-    response = requests.get(url).json()
-    if "items" in response:
-        return response["items"][0]["id"]
+    async with session.get(url) as response:
+        data = await response.json()
+        if "items" in data:
+            return data["items"][0]["id"]
     return None
 
-def get_latest_videos(channel_id):
+async def get_latest_videos(session, channel_id):
     """Fetch latest 3 video titles and publish dates."""
     url = f"https://www.googleapis.com/youtube/v3/search?key={API_KEY}&channelId={channel_id}&part=snippet&order=date&maxResults=8"
-    response = requests.get(url).json()
-
-    videos = []
-    if "items" in response:
-        for item in response["items"]:
-            title = item["snippet"]["title"]
-            published_at = item["snippet"]["publishedAt"]
-            videos.append((title, time_ago(published_at)))
-
-    return videos
+    async with session.get(url) as response:
+        data = await response.json()
+        videos = []
+        if "items" in data:
+            for item in data["items"]:
+                title = item["snippet"]["title"]
+                published_at = item["snippet"]["publishedAt"]
+                videos.append((title, time_ago(published_at)))
+        return videos
 
 async def send_to_telegram(message):
     """Send message to Telegram in chunks if it's too long."""
@@ -74,15 +73,16 @@ async def send_to_telegram(message):
 async def fetch_and_send_videos():
     """Fetch videos and send to Telegram."""
     message = ""
-    for username in CHANNEL_USERNAMES:
-        channel_id = get_channel_id(username)
-        if channel_id:
-            message += f"\n📺 Channel: {username}\n"
-            videos = get_latest_videos(channel_id)
-            for i, (title, published_time) in enumerate(videos, 1):
-                message += f"{i}. {title} ({published_time})\n"
-        else:
-            message += f"\n⚠️ Could not find channel ID for: {username}\n"
+    async with aiohttp.ClientSession() as session:
+        for username in CHANNEL_USERNAMES:
+            channel_id = await get_channel_id(session, username)
+            if channel_id:
+                message += f"\n📺 Channel: {username}\n"
+                videos = await get_latest_videos(session, channel_id)
+                for i, (title, published_time) in enumerate(videos, 1):
+                    message += f"{i}. {title} ({published_time})\n"
+            else:
+                message += f"\n⚠️ Could not find channel ID for: {username}\n"
     
     await send_to_telegram(message)
 
